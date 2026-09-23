@@ -1,0 +1,60 @@
+services:
+  api:
+    build:
+      context: ./backend
+    environment:
+      UVICORN_PORT: "8000"
+      HEALTH_PATH: "${HEALTH_PATH:-/health}"
+      HEALTH_TIMEOUT: "${HEALTH_TIMEOUT:-3s}"
+    ports:
+      # Host-side port is configurable via API_HOST_PORT.
+      - "${API_HOST_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python /app/healthcheck.py"]
+      interval: "${HEALTH_INTERVAL:-10s}"
+      timeout: "${HEALTH_TIMEOUT:-3s}"
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      API_HOST: "api"
+      API_PORT: "8000"
+      # Empty => browser calls /api on the same origin (nginx reverse proxy).
+      API_BASE_URL: ""
+      FRONTEND_HEALTH_PATH: "${FRONTEND_HEALTH_PATH:-/}"
+    ports:
+      # Host-side port is configurable via FRONTEND_HOST_PORT.
+      - "${FRONTEND_HOST_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "wget -q -O /dev/null http://127.0.0.1:80${FRONTEND_HEALTH_PATH:-/} || exit 1"
+      interval: "${HEALTH_INTERVAL:-10s}"
+      timeout: "${HEALTH_TIMEOUT:-3s}"
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # One-shot verification: code tests + build check + HTTP smoke, then exits.
+  # Run with: docker compose run --rm verify
+  # (exit code 0 = all checks passed)
+  verify:
+    build:
+      context: .
+      dockerfile: Dockerfile.verify
+    environment:
+      API_URL: "http://api:8000"
+      FRONTEND_URL: "http://frontend:80"
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    restart: "no"
